@@ -97,6 +97,14 @@ if USE_MYPYC:
             "stubtest.py",
             "stubgenc.py",
             "stubdoc.py",
+            os.path.join("apidiff", "__init__.py"),
+            os.path.join("apidiff", "__main__.py"),
+            os.path.join("apidiff", "allowlist.py"),
+            os.path.join("apidiff", "build.py"),
+            os.path.join("apidiff", "compare.py"),
+            os.path.join("apidiff", "report.py"),
+            os.path.join("apidiff", "surface.py"),
+            os.path.join("apidiff", "translate.py"),
         )
     ) + (
         # Don't want to grab this accidentally

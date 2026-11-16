@@ -82,6 +82,7 @@ Issues = "https://github.com/python/mypy/issues"
 mypy = "mypy.__main__:console_entry"
 stubgen = "mypy.stubgen:main"
 stubtest = "mypy.stubtest:main"
+apidiff = "mypy.apidiff:main"
 dmypy = "mypy.dmypy.client:console_entry"
 mypyc = "mypyc.__main__:main"
 
