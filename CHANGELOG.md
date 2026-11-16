@@ -2,6 +2,17 @@
 
 ## Next Release
 
+### New tool: apidiff
+
+Mypy now ships `apidiff`, which compares the public type annotations of two
+versions of a package and reports changes that could break existing code, such
+as a return type that now includes `None`, a removed or renamed parameter, a
+mutable attribute whose type changed, or an overload variant that is no longer
+supported. It prints mypy-style text or JSON, supports allowlists for intentional
+changes, and exits with status 1 when breaking changes are found, so it can be
+used as a CI check. Run `apidiff --old OLD_DIR --new NEW_DIR`; see the
+documentation for details.
+
 ## Mypy 2.4
 
 We've just uploaded mypy 2.4.0 to the Python Package Index ([PyPI](https://pypi.org/project/mypy/)).
