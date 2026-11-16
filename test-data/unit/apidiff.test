@@ -1,0 +1,970 @@
+-- Test cases for apidiff (mypy/apidiff). See mypy/test/testapidiff.py for the format.
+
+-- Basics
+-- ------
+
+[case testReturnWidenedToOptional]
+[file old/pkg/__init__.py]
+def read(name: str) -> str: ...
+[file new/pkg/__init__.py]
+def read(name: str) -> str | None: ...
+[out]
+new/pkg/__init__.py:1: error: Return type of "pkg.read" widened from "str" to "str | None"  [return-widened]
+
+[case testNoChanges]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+def read(name: str, *, encoding: str = "utf-8") -> str: ...
+class Box(Generic[T]):
+    value: T
+    def __init__(self, value: T) -> None: ...
+    def get(self) -> T: ...
+    @property
+    def size(self) -> int: ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+def read(name: str, *, encoding: str = "utf-8") -> str: ...
+class Box(Generic[T]):
+    value: T
+    def __init__(self, value: T) -> None: ...
+    def get(self) -> T: ...
+    @property
+    def size(self) -> int: ...
+[out]
+
+[case testReturnNarrowedIsInfo]
+# flags: --show-info
+[file old/pkg/__init__.py]
+def read(name: str) -> str | None: ...
+[file new/pkg/__init__.py]
+def read(name: str) -> str: ...
+[out]
+new/pkg/__init__.py:1: note: Return type of "pkg.read" narrowed from "str | None" to "str"  [return-narrowed]
+
+[case testReturnChangedToUnrelatedType]
+[file old/pkg/__init__.py]
+def size() -> int: ...
+[file new/pkg/__init__.py]
+def size() -> str: ...
+[out]
+new/pkg/__init__.py:1: error: Return type of "pkg.size" changed from "int" to "str"  [return-widened]
+
+[case testReturnSubclassIsCompatible]
+[file old/pkg/__init__.py]
+from typing import Sequence
+def items() -> Sequence[int]: ...
+[file new/pkg/__init__.py]
+def items() -> list[int]: ...
+[out]
+
+[case testReturnSupertypeIsBreaking]
+[file old/pkg/__init__.py]
+def items() -> list[int]: ...
+[file new/pkg/__init__.py]
+from typing import Iterable
+def items() -> Iterable[int]: ...
+[out]
+new/pkg/__init__.py:2: error: Return type of "pkg.items" widened from "list[int]" to "Iterable[int]"  [return-widened]
+
+-- Parameters
+-- ----------
+
+[case testParamTypeNarrowed]
+[file old/pkg/__init__.py]
+def f(x: int | str) -> None: ...
+[file new/pkg/__init__.py]
+def f(x: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Type of parameter "x" of "pkg.f" narrowed from "int | str" to "int"  [param-type-narrowed]
+
+[case testParamTypeWidenedIsInfo]
+# flags: --show-info
+[file old/pkg/__init__.py]
+def f(x: int) -> None: ...
+[file new/pkg/__init__.py]
+def f(x: float) -> None: ...
+[out]
+new/pkg/__init__.py:1: note: Type of parameter "x" of "pkg.f" widened from "int" to "float"  [param-widened]
+
+[case testParamRemoved]
+[file old/pkg/__init__.py]
+def f(a: int, b: int = 0) -> None: ...
+def g(*, key: str = "") -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int) -> None: ...
+def g() -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "b" of "pkg.f" was removed  [param-removed]
+new/pkg/__init__.py:2: error: Parameter "key" of "pkg.g" was removed  [param-removed]
+
+[case testParamRenamed]
+[file old/pkg/__init__.py]
+def read(name: str) -> str: ...
+[file new/pkg/__init__.py]
+def read(path: str) -> str: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "name" of "pkg.read" was renamed to "path"  [param-renamed]
+
+[case testPositionalOnlyRenameIgnored]
+[file old/pkg/__init__.py]
+def read(name: str, /) -> str: ...
+def legacy(__x: int) -> None: ...
+[file new/pkg/__init__.py]
+def read(path: str, /) -> str: ...
+def legacy(__y: int) -> None: ...
+[out]
+
+[case testRenameIsBreakingEvenWithKwargs]
+-- f(name="x") would go to **kwargs, leaving "path" unfilled
+[file old/pkg/__init__.py]
+def f(name: str) -> None: ...
+[file new/pkg/__init__.py]
+from typing import Any
+def f(path: str, **kwargs: Any) -> None: ...
+[out]
+new/pkg/__init__.py:2: error: Parameter "name" of "pkg.f" was renamed to "path"  [param-renamed]
+
+[case testParamReordered]
+[file old/pkg/__init__.py]
+def f(a: int, b: int) -> None: ...
+[file new/pkg/__init__.py]
+def f(b: int, a: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "a" of "pkg.f" moved from position 1 to 2  [param-reordered]
+new/pkg/__init__.py:1: error: Parameter "b" of "pkg.f" moved from position 2 to 1  [param-reordered]
+
+[case testParamBecameKeywordOnly]
+[file old/pkg/__init__.py]
+def f(a: int, b: int = 0) -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int, *, b: int = 0) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "b" of "pkg.f" can no longer be passed positionally  [param-kind-changed]
+
+[case testParamBecamePositionalOnly]
+[file old/pkg/__init__.py]
+def f(a: int) -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int, /) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "a" of "pkg.f" can no longer be passed by keyword  [param-kind-changed]
+
+[case testKeywordOnlyBecamePositionalOrKeywordIsCompatible]
+[file old/pkg/__init__.py]
+def f(a: int, *, b: int = 0) -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int, b: int = 0) -> None: ...
+[out]
+
+[case testDefaultRemoved]
+[file old/pkg/__init__.py]
+def f(a: int = 0) -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Parameter "a" of "pkg.f" no longer has a default value  [param-default-removed]
+
+[case testRequiredParamAdded]
+[file old/pkg/__init__.py]
+def f(a: int) -> None: ...
+def g() -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int, b: int) -> None: ...
+def g(*, flag: bool) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.f" has a new required parameter "b"  [param-added-required]
+new/pkg/__init__.py:2: error: "pkg.g" has a new required parameter "flag"  [param-added-required]
+
+[case testOptionalParamAddedIsInfo]
+# flags: --show-info
+[file old/pkg/__init__.py]
+def f(a: int) -> None: ...
+[file new/pkg/__init__.py]
+def f(a: int, b: int = 0) -> None: ...
+[out]
+new/pkg/__init__.py:1: note: "pkg.f" has a new optional parameter "b"  [param-added-optional]
+
+[case testStarArgsRemoved]
+[file old/pkg/__init__.py]
+def f(*args: int, **kwargs: str) -> None: ...
+[file new/pkg/__init__.py]
+def f() -> None: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.f" no longer accepts *args  [star-args-removed]
+new/pkg/__init__.py:1: error: "pkg.f" no longer accepts **kwargs  [star-args-removed]
+
+[case testStarArgsTypeNarrowed]
+[file old/pkg/__init__.py]
+def f(*args: int | str) -> None: ...
+[file new/pkg/__init__.py]
+def f(*args: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: Type of *args of "pkg.f" narrowed from "int | str" to "int"  [param-type-narrowed]
+
+[case testParamsReplacedByStarArgsIsCompatible]
+[file old/pkg/__init__.py]
+def f(a: int, b: int) -> None: ...
+[file new/pkg/__init__.py]
+def f(*args: int, **kwargs: int) -> None: ...
+[out]
+
+-- Any
+-- ---
+
+[case testAnnotatingUntypedParamIsWarning]
+[file old/pkg/__init__.py]
+def f(x) -> None: ...
+[file new/pkg/__init__.py]
+def f(x: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: warning: Type of parameter "x" of "pkg.f" changed from "Any" to "int", compatible only because of Any  [any-changed]
+
+[case testReturnBecameAnyIsWarning]
+[file old/pkg/__init__.py]
+def f() -> str: ...
+[file new/pkg/__init__.py]
+from typing import Any
+def f() -> Any: ...
+[out]
+new/pkg/__init__.py:2: warning: Return type of "pkg.f" changed from "str" to "Any", compatible only because of Any  [any-changed]
+
+[case testUnchangedAnyIsSilent]
+[file old/pkg/__init__.py]
+from typing import Any
+def f(x, y: Any) -> dict[str, Any]: ...
+[file new/pkg/__init__.py]
+from typing import Any
+def f(x, y: Any) -> dict[str, Any]: ...
+[out]
+
+-- Attributes
+-- ----------
+
+[case testModuleVariableIsInvariant]
+[file old/pkg/__init__.py]
+TIMEOUT: int = 1
+RETRIES: float = 1.0
+[file new/pkg/__init__.py]
+TIMEOUT: float = 1
+RETRIES: int = 1
+[out]
+new/pkg/__init__.py:1: error: Type of mutable attribute "pkg.TIMEOUT" changed from "int" to "float"  [attr-type-changed]
+new/pkg/__init__.py:2: error: Type of mutable attribute "pkg.RETRIES" changed from "float" to "int"  [attr-type-changed]
+
+[case testFinalIsCovariant]
+[file old/pkg/__init__.py]
+from typing import Final
+A: Final[float] = 1.0
+B: Final[int] = 1
+[file new/pkg/__init__.py]
+from typing import Final
+A: Final[int] = 1
+B: Final[int | None] = 1
+[out]
+new/pkg/__init__.py:3: error: Type of "pkg.B" widened from "int" to "int | None"  [attr-widened]
+
+[case testAttributeBecameReadOnlyProperty]
+[file old/pkg/__init__.py]
+class C:
+    x: int
+[file new/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> int: ...
+[out]
+new/pkg/__init__.py:3: error: "pkg.C.x" is no longer writable  [attr-became-readonly]
+
+[case testPropertyWidened]
+[file old/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> int: ...
+[file new/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> int | None: ...
+[out]
+new/pkg/__init__.py:3: error: Type of "pkg.C.x" widened from "int" to "int | None"  [attr-widened]
+
+[case testSettablePropertyIsInvariant]
+[file old/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> int: ...
+    @x.setter
+    def x(self, value: int) -> None: ...
+[file new/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> bool: ...
+    @x.setter
+    def x(self, value: bool) -> None: ...
+[out]
+new/pkg/__init__.py:3: error: Type of mutable attribute "pkg.C.x" changed from "int" to "bool"  [attr-type-changed]
+
+[case testPropertyBecameAttributeIsCompatible]
+[file old/pkg/__init__.py]
+class C:
+    @property
+    def x(self) -> int: ...
+[file new/pkg/__init__.py]
+class C:
+    x: int
+[out]
+
+[case testAttributeBecameClassVar]
+[file old/pkg/__init__.py]
+class C:
+    x: int
+[file new/pkg/__init__.py]
+from typing import ClassVar
+class C:
+    x: ClassVar[int]
+[out]
+new/pkg/__init__.py:3: error: "pkg.C.x" became a ClassVar; it can no longer be set on instances  [attr-became-classvar]
+
+[case testInstanceAttributeFromInit]
+[file old/pkg/__init__.py]
+class C:
+    def __init__(self) -> None:
+        self.count = 0
+[file new/pkg/__init__.py]
+class C:
+    def __init__(self) -> None:
+        self.count = ""
+[out]
+new/pkg/__init__.py:3: error: Type of mutable attribute "pkg.C.count" changed from "int" to "str"  [attr-type-changed]
+
+[case testFrozenDataclassFieldIsCovariant]
+[file old/pkg/__init__.py]
+from dataclasses import dataclass
+@dataclass(frozen=True)
+class P:
+    x: float
+    y: int
+[file new/pkg/__init__.py]
+from dataclasses import dataclass
+@dataclass(frozen=True)
+class P:
+    x: int
+    y: int | None
+[out]
+new/pkg/__init__.py:3: error: Type of parameter "x" of "pkg.P" narrowed from "float" to "int"  [param-type-narrowed]
+new/pkg/__init__.py:5: error: Type of "pkg.P.y" widened from "int" to "int | None"  [attr-widened]
+
+[case testDataclassFieldAdded]
+[file old/pkg/__init__.py]
+from dataclasses import dataclass
+@dataclass
+class P:
+    x: int
+[file new/pkg/__init__.py]
+from dataclasses import dataclass
+@dataclass
+class P:
+    x: int
+    y: int
+[out]
+new/pkg/__init__.py:3: error: "pkg.P" has a new required parameter "y"  [param-added-required]
+
+-- Classes and methods
+-- -------------------
+
+[case testMethodReturnWidened]
+[file old/pkg/__init__.py]
+class C:
+    def get(self) -> int: ...
+[file new/pkg/__init__.py]
+class C:
+    def get(self) -> int | None: ...
+[out]
+new/pkg/__init__.py:2: error: Return type of "pkg.C.get" widened from "int" to "int | None"  [return-widened]
+
+[case testMethodRemoved]
+[file old/pkg/__init__.py]
+class C:
+    def get(self) -> int: ...
+    def _private(self) -> int: ...
+[file new/pkg/__init__.py]
+class C:
+    pass
+[out]
+old/pkg/__init__.py:2: error: "pkg.C.get" was removed  [symbol-removed]
+
+[case testMethodMovedToBaseClassIsCompatible]
+[file old/pkg/__init__.py]
+class Base: ...
+class C(Base):
+    def get(self) -> int: ...
+[file new/pkg/__init__.py]
+class Base:
+    def get(self) -> int: ...
+class C(Base): ...
+[out]
+
+[case testMethodKindChanged]
+[file old/pkg/__init__.py]
+class C:
+    def a(self) -> int: ...
+    def b(self) -> int: ...
+    @staticmethod
+    def c() -> int: ...
+[file new/pkg/__init__.py]
+class C:
+    @staticmethod
+    def a() -> int: ...
+    @property
+    def b(self) -> int: ...
+    @classmethod
+    def c(cls) -> int: ...
+[out]
+new/pkg/__init__.py:3: error: "pkg.C.a" changed from an instance method to a static method  [method-kind-changed]
+new/pkg/__init__.py:5: error: "pkg.C.b" changed from an instance method to a property  [method-kind-changed]
+
+[case testConstructorChanged]
+[file old/pkg/__init__.py]
+class C:
+    def __init__(self, name: str) -> None: ...
+[file new/pkg/__init__.py]
+class C:
+    def __init__(self, name: str, size: int) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.C" has a new required parameter "size"  [param-added-required]
+
+[case testConstructorAddedToClassWithoutInit]
+[file old/pkg/__init__.py]
+class C: ...
+[file new/pkg/__init__.py]
+class C:
+    def __init__(self, name: str) -> None: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.C" has a new required parameter "name"  [param-added-required]
+
+[case testClassBecameFinal]
+[file old/pkg/__init__.py]
+class C:
+    def run(self) -> None: ...
+[file new/pkg/__init__.py]
+from typing import final
+@final
+class C:
+    def run(self) -> None: ...
+[out]
+new/pkg/__init__.py:3: error: Class "pkg.C" became final; it can't be subclassed  [class-became-final]
+
+[case testMethodBecameFinal]
+[file old/pkg/__init__.py]
+class C:
+    def run(self) -> None: ...
+[file new/pkg/__init__.py]
+from typing import final
+class C:
+    @final
+    def run(self) -> None: ...
+[out]
+new/pkg/__init__.py:4: error: Method "pkg.C.run" became final; subclasses can no longer override it  [method-became-final]
+
+[case testAbstractMethodAdded]
+[file old/pkg/__init__.py]
+from abc import ABC
+class Base(ABC):
+    def run(self) -> None: ...
+[file new/pkg/__init__.py]
+from abc import ABC, abstractmethod
+class Base(ABC):
+    def run(self) -> None: ...
+    @abstractmethod
+    def stop(self) -> None: ...
+[out]
+new/pkg/__init__.py:2: error: "pkg.Base.stop" is abstract; subclasses of "pkg.Base" must now implement it  [abstract-method-added]
+
+[case testBaseClassRemoved]
+[file old/pkg/__init__.py]
+class Base:
+    def run(self) -> None: ...
+class C(Base): ...
+[file new/pkg/__init__.py]
+class Base:
+    def run(self) -> None: ...
+class C: ...
+[out]
+new/pkg/__init__.py:3: error: Class "pkg.C" no longer inherits from "pkg.Base"  [class-base-removed]
+old/pkg/__init__.py:2: error: "pkg.C.run" was removed  [symbol-removed]
+
+[case testExternalBaseRemovedDoesNotReportEachMember]
+[file old/pkg/__init__.py]
+class Error(ValueError): ...
+[file new/pkg/__init__.py]
+class Error(Exception): ...
+[out]
+new/pkg/__init__.py:1: error: Class "pkg.Error" no longer inherits from "builtins.ValueError"  [class-base-removed]
+
+[case testMetaclassChanged]
+[file old/pkg/__init__.py]
+class MetaA(type): ...
+class MetaB(type): ...
+class C(metaclass=MetaA): ...
+[file new/pkg/__init__.py]
+class MetaA(type): ...
+class MetaB(type): ...
+class C(metaclass=MetaB): ...
+[out]
+new/pkg/__init__.py:3: error: Metaclass of "pkg.C" changed from "pkg.MetaA" to "pkg.MetaB"  [metaclass-changed]
+
+[case testMetaclassSubclassIsCompatible]
+[file old/pkg/__init__.py]
+class C: ...
+[file new/pkg/__init__.py]
+from abc import ABCMeta
+class C(metaclass=ABCMeta): ...
+[out]
+
+[case testProtocolMemberAdded]
+[file old/pkg/__init__.py]
+from typing import Protocol
+class Reader(Protocol):
+    def read(self) -> bytes: ...
+[file new/pkg/__init__.py]
+from typing import Protocol
+class Reader(Protocol):
+    def read(self) -> bytes: ...
+    def close(self) -> None: ...
+[out]
+new/pkg/__init__.py:2: error: Protocol "pkg.Reader" has a new member "close"; existing implementations may no longer match  [protocol-member-added]
+
+[case testClassNoLongerProtocol]
+[file old/pkg/__init__.py]
+from typing import Protocol
+class Reader(Protocol):
+    def read(self) -> bytes: ...
+[file new/pkg/__init__.py]
+class Reader:
+    def read(self) -> bytes: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.Reader" is no longer a protocol; classes that matched it structurally must now inherit from it  [class-no-longer-protocol]
+
+[case testNestedClassMemberChanged]
+[file old/pkg/__init__.py]
+class Outer:
+    class Inner:
+        def get(self) -> int: ...
+[file new/pkg/__init__.py]
+class Outer:
+    class Inner:
+        def get(self) -> str: ...
+[out]
+new/pkg/__init__.py:3: error: Return type of "pkg.Outer.Inner.get" changed from "int" to "str"  [return-widened]
+
+[case testInheritedGenericMethodIsSpecialized]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class Base(Generic[T]):
+    def get(self) -> T: ...
+class Sub(Base[int]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class Base(Generic[T]):
+    def get(self) -> T: ...
+class Sub(Base[object]): ...
+[out]
+new/pkg/__init__.py:4: error: Return type of "pkg.Sub.get" widened from "int" to "object"  [return-widened]
+
+[case testTypedDictChanges]
+[file old/pkg/__init__.py]
+from typing import TypedDict, NotRequired
+class Movie(TypedDict):
+    title: str
+    year: int
+    rating: NotRequired[float]
+[file new/pkg/__init__.py]
+from typing import TypedDict
+class Movie(TypedDict):
+    title: str
+    rating: float
+    studio: str
+[out]
+new/pkg/__init__.py:2: error: Key "year" of TypedDict "pkg.Movie" was removed  [symbol-removed]
+new/pkg/__init__.py:2: error: Key "rating" of "pkg.Movie" is now required  [typeddict-key-required]
+new/pkg/__init__.py:2: error: "pkg.Movie" has a new required key "studio"  [typeddict-key-required]
+
+-- Generics
+-- --------
+
+[case testTypeParamRemoved]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+K = TypeVar("K")
+V = TypeVar("V")
+class Store(Generic[K, V]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+K = TypeVar("K")
+class Store(Generic[K]): ...
+[out]
+new/pkg/__init__.py:3: error: Type parameter "V" of "pkg.Store" was removed  [typeparam-removed]
+old/pkg/__init__.py:3: error: "pkg.V" was removed  [symbol-removed]
+
+[case testTypeParamAddedIsWarning]
+[file old/pkg/__init__.py]
+class Box: ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class Box(Generic[T]): ...
+[out]
+new/pkg/__init__.py:3: warning: "pkg.Box" has a new type parameter "T"; unparameterized uses now mean "T" is Any  [typeparam-added]
+
+[case testTypeParamReordered]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+K = TypeVar("K")
+V = TypeVar("V")
+class Store(Generic[K, V]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+K = TypeVar("K")
+V = TypeVar("V")
+class Store(Generic[V, K]): ...
+[out]
+new/pkg/__init__.py:4: error: Type parameter "K" of "pkg.Store" moved from position 1 to 2  [typeparam-reordered]
+new/pkg/__init__.py:4: error: Type parameter "V" of "pkg.Store" moved from position 2 to 1  [typeparam-reordered]
+
+[case testTypeParamBoundChanged]
+# flags: --show-info
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+A = TypeVar("A", bound=float)
+B = TypeVar("B", bound=int)
+class Narrow(Generic[A]): ...
+class Wide(Generic[B]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+A = TypeVar("A", bound=int)
+B = TypeVar("B", bound=float)
+class Narrow(Generic[A]): ...
+class Wide(Generic[B]): ...
+[out]
+new/pkg/__init__.py:4: error: Bound of type parameter "A" of "pkg.Narrow" narrowed from "float" to "int"  [typeparam-bound-narrowed]
+new/pkg/__init__.py:5: note: Bound of type parameter "B" of "pkg.Wide" widened from "int" to "float"  [typeparam-bound-widened]
+
+[case testTypeParamVarianceChanged]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+T_co = TypeVar("T_co", covariant=True)
+class Box(Generic[T_co]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T_co = TypeVar("T_co")
+class Box(Generic[T_co]): ...
+[out]
+new/pkg/__init__.py:3: error: Variance of type parameter "T_co" of "pkg.Box" changed from covariant to invariant  [typeparam-variance-changed]
+
+[case testFunctionTypeVarBoundNarrowed]
+[file old/pkg/__init__.py]
+from typing import TypeVar
+N = TypeVar("N", bound=float)
+def double(x: N) -> N: ...
+[file new/pkg/__init__.py]
+from typing import TypeVar
+N = TypeVar("N", bound=int)
+def double(x: N) -> N: ...
+[out]
+new/pkg/__init__.py:3: error: Bound of type variable "N" of "pkg.double" narrowed from "float" to "int"  [typeparam-bound-narrowed]
+
+[case testFunctionTypeVarConstraintsNarrowed]
+[file old/pkg/__init__.py]
+from typing import TypeVar
+S = TypeVar("S", str, bytes)
+def first(x: S) -> S: ...
+[file new/pkg/__init__.py]
+from typing import TypeVar
+S = TypeVar("S", str, str)
+def first(x: S) -> S: ...
+[out]
+new/pkg/__init__.py:3: error: Constraints of type variable "S" of "pkg.first" narrowed from "str, bytes" to "str, str"  [typeparam-bound-narrowed]
+
+-- Overloads
+-- ---------
+
+[case testOverloadReorderedIsCompatible]
+[file old/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: int) -> int: ...
+@overload
+def conv(x: str) -> str: ...
+def conv(x): ...
+[file new/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: str) -> str: ...
+@overload
+def conv(x: int) -> int: ...
+def conv(x): ...
+[out]
+
+[case testOverloadVariantRemoved]
+[file old/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: int) -> int: ...
+@overload
+def conv(x: str) -> str: ...
+def conv(x): ...
+[file new/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: str) -> str: ...
+@overload
+def conv(x: bytes) -> bytes: ...
+def conv(x): ...
+[out]
+new/pkg/__init__.py:3: error: Overload variant "def conv(x: int) -> int" of "pkg.conv" is no longer supported; closest new variant is "def conv(x: str) -> str": Type of parameter "x" of "pkg.conv" changed from "int" to "str"  [overload-variant-removed]
+
+[case testFunctionBecameOverloadedIsCompatible]
+[file old/pkg/__init__.py]
+def conv(x: int) -> int | str: ...
+[file new/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: int) -> int: ...
+@overload
+def conv(x: str) -> str: ...
+def conv(x): ...
+[out]
+
+[case testOverloadCollapsedIntoUnionIsCompatible]
+[file old/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: int) -> int: ...
+@overload
+def conv(x: str) -> str: ...
+def conv(x): ...
+[file new/pkg/__init__.py]
+def conv(x: object) -> int: ...
+[out]
+new/pkg/__init__.py:1: error: Overload variant "def conv(x: str) -> str" of "pkg.conv" is no longer supported: Return type of "pkg.conv" changed from "str" to "int"  [overload-variant-removed]
+
+[case testFunctionBecameOverloadedLosingSupport]
+[file old/pkg/__init__.py]
+def conv(x: int | str) -> int: ...
+[file new/pkg/__init__.py]
+from typing import overload
+@overload
+def conv(x: int) -> int: ...
+@overload
+def conv(x: bytes) -> int: ...
+def conv(x): ...
+[out]
+new/pkg/__init__.py:3: error: Type of parameter "x" of "pkg.conv" narrowed from "int | str" to "int"  [param-type-narrowed]
+
+-- Public API and removals
+-- -----------------------
+
+[case testRemovedFunction]
+[file old/pkg/__init__.py]
+def keep() -> None: ...
+def gone() -> None: ...
+[file new/pkg/__init__.py]
+def keep() -> None: ...
+[out]
+old/pkg/__init__.py:2: error: "pkg.gone" was removed  [symbol-removed]
+
+[case testRemovedModule]
+[file old/pkg/__init__.py]
+[file old/pkg/io.py]
+def read() -> str: ...
+def write() -> None: ...
+[file new/pkg/__init__.py]
+[out]
+old/pkg/io.py:1: error: Module "pkg.io" was removed  [module-removed]
+
+[case testPrivateNamesAndModulesIgnored]
+[file old/pkg/__init__.py]
+def _helper() -> int: ...
+[file old/pkg/_impl.py]
+def run() -> int: ...
+[file new/pkg/__init__.py]
+def _helper() -> str: ...
+[file new/pkg/_impl.py]
+def run() -> str: ...
+[out]
+
+[case testDunderAllControlsPublicNames]
+[file old/pkg/__init__.py]
+__all__ = ["read", "_special"]
+def read() -> str: ...
+def internal() -> int: ...
+def _special() -> int: ...
+[file new/pkg/__init__.py]
+__all__ = ["_special"]
+def read() -> str: ...
+def internal() -> str: ...
+def _special() -> str: ...
+[out]
+new/pkg/__init__.py:4: error: Return type of "pkg._special" changed from "int" to "str"  [return-widened]
+old/pkg/__init__.py:2: error: "pkg.read" is no longer exported  [symbol-removed]
+
+[case testReexportsAreComparedAtPublicPath]
+[file old/pkg/__init__.py]
+from pkg._impl import read as read
+from pkg._impl import write
+[file old/pkg/_impl.py]
+def read() -> str: ...
+def write() -> None: ...
+[file new/pkg/__init__.py]
+from pkg._impl import read as read
+[file new/pkg/_impl.py]
+def read() -> str | None: ...
+[out]
+new/pkg/_impl.py:1: error: Return type of "pkg.read" widened from "str" to "str | None"  [return-widened]
+
+[case testDefinitionMovedBehindReexportIsCompatible]
+[file old/pkg/__init__.py]
+def read() -> str: ...
+class C:
+    def get(self) -> int: ...
+[file new/pkg/__init__.py]
+from pkg._impl import read as read, C as C
+[file new/pkg/_impl.py]
+def read() -> str: ...
+class C:
+    def get(self) -> int: ...
+[out]
+
+[case testKindChanged]
+[file old/pkg/__init__.py]
+class Reader: ...
+VALUE: int = 1
+[file new/pkg/__init__.py]
+def Reader() -> object: ...
+def VALUE() -> int: ...
+[out]
+new/pkg/__init__.py:1: error: "pkg.Reader" changed from a class to a function  [kind-changed]
+new/pkg/__init__.py:2: error: "pkg.VALUE" changed from an attribute to a function  [kind-changed]
+
+[case testAddedSymbolsAreInfo]
+# flags: --show-info
+[file old/pkg/__init__.py]
+class C: ...
+[file new/pkg/__init__.py]
+class C:
+    def new_method(self) -> None: ...
+def new_function() -> None: ...
+[file new/pkg/extra.py]
+def f() -> None: ...
+[out]
+new/pkg/__init__.py:2: note: Instance method "pkg.C.new_method" was added  [symbol-added]
+new/pkg/__init__.py:3: note: Function "pkg.new_function" was added  [symbol-added]
+new/pkg/extra.py:1: note: Module "pkg.extra" was added  [symbol-added]
+
+-- Aliases and unresolved types
+-- ----------------------------
+
+[case testTypeAliasChanged]
+[file old/pkg/__init__.py]
+Pairs = list[tuple[int, int]]
+Number = int
+[file new/pkg/__init__.py]
+Pairs = list[tuple[int, str]]
+Number = float
+[out]
+new/pkg/__init__.py:1: warning: Type alias "pkg.Pairs" changed from "list[tuple[int, int]]" to "list[tuple[int, str]]"  [alias-changed]
+new/pkg/__init__.py:2: warning: "pkg.Number" changed from "builtins.int" to "builtins.float"  [alias-changed]
+
+[case testRemovedClassInSignatureIsUnresolved]
+[file old/pkg/__init__.py]
+class Old: ...
+class New: ...
+def make() -> Old: ...
+[file new/pkg/__init__.py]
+class New: ...
+def make() -> New: ...
+[out]
+new/pkg/__init__.py:2: warning: Return type of "pkg.make" changed from "Old" to "New", which refers to a class that no longer exists  [type-unresolved]
+old/pkg/__init__.py:1: error: "pkg.Old" was removed  [symbol-removed]
+
+[case testClassMovedBetweenPrivateModulesIsCompatible]
+[file old/pkg/__init__.py]
+from pkg._a import Thing as Thing
+def make() -> Thing: ...
+[file old/pkg/_a.py]
+class Thing: ...
+[file new/pkg/__init__.py]
+from pkg._b import Thing as Thing
+def make() -> Thing: ...
+[file new/pkg/_b.py]
+class Thing: ...
+[out]
+
+[case testMissingDependencyIsWarning]
+[file old/pkg/__init__.py]
+import not_installed_anywhere
+def f() -> None: ...
+[file new/pkg/__init__.py]
+import not_installed_anywhere
+def f() -> None: ...
+[out]
+new: warning: Cannot resolve import "not_installed_anywhere"; types from it are treated as Any  [missing-dependency]
+
+[case testMultiplePackagesAndPlainModules]
+[file old/alpha/__init__.py]
+def a() -> int: ...
+[file old/beta.py]
+def b() -> int: ...
+[file new/alpha/__init__.py]
+def a() -> int: ...
+[file new/beta.py]
+def b() -> str: ...
+[out]
+new/beta.py:1: error: Return type of "beta.b" changed from "int" to "str"  [return-widened]
+
+[case testChangedClassTypeParamBoundDoesNotAffectMembers]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T", bound=float)
+class Box(Generic[T]):
+    value: T
+    def get(self, default: T) -> T: ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T", bound=int)
+class Box(Generic[T]):
+    value: T
+    def get(self, default: T) -> T: ...
+[out]
+new/pkg/__init__.py:3: error: Bound of type parameter "T" of "pkg.Box" narrowed from "float" to "int"  [typeparam-bound-narrowed]
+
+[case testInheritedGenericAttributeIsSpecialized]
+[file old/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class Base(Generic[T]):
+    value: T
+class Sub(Base[int]): ...
+[file new/pkg/__init__.py]
+from typing import Generic, TypeVar
+T = TypeVar("T")
+class Base(Generic[T]):
+    value: T
+class Sub(Base[str]): ...
+[out]
+new/pkg/__init__.py:4: error: Type of mutable attribute "pkg.Sub.value" changed from "int" to "str"  [attr-type-changed]
+
+[case testSelfTypeMethodsAreCompatible]
+[file old/pkg/__init__.py]
+from typing import Self
+class Builder:
+    def add(self, x: int) -> Self: ...
+class Sub(Builder): ...
+[file new/pkg/__init__.py]
+from typing import Self
+class Builder:
+    def add(self, x: int) -> Self: ...
+class Sub(Builder): ...
+[out]
