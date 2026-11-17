@@ -370,7 +370,24 @@ def format_json(changes: list[Change]) -> str:
     return json.dumps(report, indent=2)
 
 
-FORMATTERS = {"text": format_text, "json": format_json}
+def format_markdown(changes: list[Change]) -> str:
+    """A Markdown table, e.g. for a pull request comment or a changelog."""
+    count = len(changes)
+    lines = [f"## API changes: {count} breaking change{'s' if count != 1 else ''}"]
+    if changes:
+        lines += ["", "| Symbol | Change | Details | Old | New |", "|---|---|---|---|---|"]
+    for c in changes:
+        cells = [f"`{c.name}`", f"`{c.code}`", c.message, _md_code(c.old), _md_code(c.new)]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _md_code(text: str | None) -> str:
+    # A "|" would end the table cell, even inside backticks.
+    return "" if text is None else "`" + text.replace("|", "\\|") + "`"
+
+
+FORMATTERS = {"text": format_text, "json": format_json, "markdown": format_markdown}
 
 
 # Command line
