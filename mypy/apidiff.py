@@ -19,10 +19,18 @@ split into items. Any other difference is reported (conservatively) as breaking.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import argparse
+import json
+import os
+import re
+import sys
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 
 import mypy.build
-from mypy.find_sources import create_source_list
+from mypy.config_parser import parse_config_file, parse_version
+from mypy.errors import CompileError
+from mypy.find_sources import InvalidSourceList, create_source_list
 from mypy.nodes import (
     Decorator,
     FuncDef,
@@ -46,6 +54,8 @@ from mypy.types import (
     UnionType,
     get_proper_type,
 )
+from mypy.util import check_python_version
+from mypy.version import __version__
 
 
 @dataclass(frozen=True)
@@ -340,3 +350,102 @@ def _fmt(typ: Type | None) -> str | None:
 
 def _fmt_sigs(sigs: list[CallableType]) -> str:
     return "; ".join(str(sig) for sig in sigs)
+
+
+# Reports
+
+
+def format_text(changes: list[Change]) -> str:
+    lines = []
+    for c in changes:
+        detail = f' (old: "{c.old}", new: "{c.new}")' if c.old is not None else ""
+        lines.append(f"{c.name}: {c.message}{detail}  [{c.code}]")
+    count = len(changes)
+    lines.append(f"Found {count} breaking change{'s' if count != 1 else ''}")
+    return "\n".join(lines)
+
+
+def format_json(changes: list[Change]) -> str:
+    report = {"breaking_changes": [asdict(c) for c in changes], "count": len(changes)}
+    return json.dumps(report, indent=2)
+
+
+FORMATTERS = {"text": format_text, "json": format_json}
+
+
+# Command line
+
+
+def parse_options(args: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="apidiff",
+        description="Report breaking changes between two versions of a package's public API.",
+        epilog="Exit status: 0 if compatible, 1 if breaking changes were found, 2 on errors.",
+    )
+    parser.add_argument("old", help="directory or file with the old version")
+    parser.add_argument("new", help="directory or file with the new version")
+    parser.add_argument(
+        "--format", choices=sorted(FORMATTERS), default="text", help="report format"
+    )
+    parser.add_argument("--output", metavar="FILE", help="write the report to FILE")
+    parser.add_argument(
+        "--ignore",
+        action="append",
+        default=[],
+        metavar="REGEX",
+        help="ignore changes to symbols whose full name matches REGEX (can be repeated)",
+    )
+    parser.add_argument(
+        "--python-version",
+        type=parse_version,
+        metavar="X.Y",
+        help="analyze as if running under Python X.Y",
+    )
+    parser.add_argument(
+        "--mypy-config-file", metavar="FILE", help="use mypy settings (e.g. mypy_path) from FILE"
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    return parser.parse_args(args)
+
+
+def make_options(args: argparse.Namespace) -> Options:
+    options = Options()
+    if args.mypy_config_file:
+        parse_config_file(options, lambda: None, args.mypy_config_file, sys.stdout, sys.stderr)
+    if args.python_version:
+        options.python_version = args.python_version
+    # Never write a cache: analyzing a package must not leave files behind.
+    options.incremental = False
+    options.cache_dir = os.devnull
+    return options
+
+
+def run(args: argparse.Namespace) -> int:
+    """Compare the two versions, print the report and return the exit status."""
+    options = make_options(args)
+    try:
+        old, new = load_api(args.old, options), load_api(args.new, options)
+    except (CompileError, InvalidSourceList, OSError) as e:
+        print(f"apidiff: {e}", file=sys.stderr)
+        return 2
+    changes = [
+        c
+        for c in compare_api(old, new)
+        if not any(re.fullmatch(pattern, c.name) for pattern in args.ignore)
+    ]
+    report = FORMATTERS[args.format](changes)
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(report + "\n")
+    else:
+        print(report)
+    return 1 if changes else 0
+
+
+def main(args: Sequence[str] | None = None) -> int:
+    check_python_version("apidiff")
+    return run(parse_options(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
