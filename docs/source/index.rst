@@ -91,6 +91,7 @@ Contents
    extending_mypy
    stubgen
    stubtest
+   apidiff
 
 .. toctree::
    :maxdepth: 2

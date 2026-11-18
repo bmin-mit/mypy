@@ -95,6 +95,7 @@ if USE_MYPYC:
             os.path.join("server", "__init__.py"),
             # Skip these to reduce the size of the build
             "stubtest.py",
+            "apidiff.py",
             "stubgenc.py",
             "stubdoc.py",
         )
